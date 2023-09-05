@@ -1,4 +1,12 @@
 const std = @import("std");
+const builtin = @import("builtin");
+
+// const include_dir = switch (builtin.target.os.tag) {
+//     .linux => "/usr/include",
+//     .windows => "C:\\Program Files\\PostgreSQL\\15\\include",
+//     .macos => "/opt/homebrew/opt/libpq",
+//     else => "/usr/include",
+// };
 
 // Although this function looks imperative, note that its job is to
 // declaratively construct a build graph that will be executed by an external
@@ -14,7 +22,18 @@ pub fn build(b: *std.Build) void {
     // between Debug, ReleaseSafe, ReleaseFast, and ReleaseSmall. Here we do not
     // set a preferred release mode, allowing the user to decide how to optimize.
     const optimize = b.standardOptimizeOption(.{});
-    
+
+    // b.addSearchPrefix(include_dir);
+
+    // const db_uri = b.option(
+    //     []const u8,
+    //     "db",
+    //     "Specify the database url",
+    // ) orelse "postgresql://postgresql:postgresql@localhost:5432/mydb";
+
+    // const db_options = b.addOptions();
+    // db_options.addOption([]const u8, "db_uri", db_uri);
+
     const exe = b.addExecutable(.{
         .name = "backend-cockfighting-q3-2023-zig",
         // In this case the main source file is merely a path, however, in more
@@ -30,6 +49,13 @@ pub fn build(b: *std.Build) void {
     });
     exe.addModule("zap", zap.module("zap"));
     exe.linkLibrary(zap.artifact("facil.io"));
+
+    const pgz = b.dependency("pgz", .{
+        .target = target,
+        .optimize = optimize,
+    });
+    exe.addModule("pgz", pgz.module("pgz"));
+    // exe.linkLibrary(pgz.artifact());
 
     // This declares intent for the executable to be installed into the
     // standard location when the user invokes the "install" step (the default

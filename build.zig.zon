@@ -7,6 +7,10 @@
         .zap = .{
             .url = "https://github.com/zigzap/zap/archive/refs/tags/v0.1.10-pre.tar.gz",
             .hash = "1220a645e8ae84064f3342609f65d1c97e23c292616f5d1040cdf314ca52d7643f8a",
-        }
-    }
+        },
+        .pgz = .{
+            .url = "https://github.com/star-tek-mb/pgz/archive/2816338a92d91f89f63bdcddd23bb3e34a11275f.tar.gz",
+            .hash = "12201d7ceacce0c1b734a6f3feded12050a61f5ab93ed2666fac84b96e2a306d2a2f",
+        },
+    },
 }
