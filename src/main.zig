@@ -4,21 +4,45 @@ const Connection = @import("pgz").Connection;
 
 var routes: std.StringHashMap(zap.SimpleHttpRequestFn) = undefined;
 
+fn not_found_response(r: zap.SimpleRequest) void {
+    var json_to_send: []const u8 = "{\"message\":\"not found\"}";
+    r.setStatus(zap.StatusCode.not_found);
+    r.setContentType(.JSON) catch return;
+    r.sendBody(json_to_send) catch return;
+}
+
+fn internal_server_error_response(r: zap.SimpleRequest) void {
+    var json_to_send: []const u8 = "{\"message\":\"internal server error\"}";
+    r.setStatus(zap.StatusCode.internal_server_error);
+    r.setContentType(.JSON) catch return;
+    r.sendBody(json_to_send) catch return;
+}
+
+// dont look at it xd
+// all zap performance was drowned here
 fn on_request(r: zap.SimpleRequest) void {
-    // if (!std.mem.eql(u8, r.method.?, "GET"))
-    //     return;
-
     if (r.path) |the_path| {
-        if (routes.get(the_path)) |handler| {
-            handler(r);
-            return;
-        }
+        if (r.method) |the_method| {
+            std.log.info("{?s} {s}", .{ the_method, the_path });
 
-        var json_to_send: []const u8 = "null";
-        // std.debug.print("<< json: {s}\n", .{json_to_send});
-        r.setContentType(.JSON) catch return;
-        r.sendBody(json_to_send) catch return;
+            var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+            defer arena.deinit();
+            const route_path = std.fmt.allocPrint(arena.allocator(), "{s} {s}", .{ the_method, the_path }) catch return;
+
+            if (routes.get(route_path)) |handler| {
+                handler(r);
+                return;
+            }
+
+            // i need to implement a router to handle those cases...
+            if (std.mem.startsWith(u8, the_path, "/pessoas/")) {
+                find_person(r);
+                return;
+            }
+        }
     }
+
+    not_found_response(r);
 }
 
 var connection: Connection = undefined;
@@ -28,24 +52,59 @@ fn health_check(r: zap.SimpleRequest) void {
     r.sendJson("{\"message\":\"ok\"}") catch return;
 }
 
-fn create_person() !void {
-    var result = try connection.query("SELECT 1 as number;", struct { number: ?[]const u8 });
+fn create_person(r: zap.SimpleRequest) void {
+    var result = connection.query("SELECT 1 as number;", struct { number: ?[]const u8 }) catch {
+        internal_server_error_response(r);
+        return;
+    };
     defer result.deinit();
-    try std.io.getStdOut().writer().print("number = {s}\n", .{result.data[0].number.?});
+    std.io.getStdOut().writer().print("number = {s}\n", .{result.data[0].number.?}) catch {
+        internal_server_error_response(r);
+        return;
+    };
+
+    r.setContentType(.JSON) catch return;
+    r.setStatus(zap.StatusCode.created);
+    r.setHeader("Location", "/pessoas/1") catch return;
+    r.sendJson("{\"message\":\"ok\"}") catch return;
 }
 
-fn people_routes(r: zap.SimpleRequest) void {
-    if (std.mem.eql(u8, r.method.?, "POST")) {
-        create_person() catch return;
-        r.setContentType(.JSON) catch return;
-        r.setStatus(zap.StatusCode.created);
-        r.sendJson("{\"message\":\"ok\"}") catch return;
+fn load_people(r: zap.SimpleRequest) void {
+    r.setContentType(.JSON) catch return;
+    r.setStatus(zap.StatusCode.ok);
+    r.sendJson("{\"message\":\"ok\"}") catch return;
+}
+
+// I need a router, for sure
+fn find_person(r: zap.SimpleRequest) void {
+    if (!std.mem.eql(u8, r.method.?, "GET")) {
+        not_found_response(r);
         return;
     }
 
-    r.setContentType(.JSON) catch return;
-    r.setStatus(zap.StatusCode.not_found);
-    r.sendJson("{\"message\":\"not found\"}") catch return;
+    // It should be handle on 'on_request' method, i know...
+    // it is just a non ortodoxy solution :)
+    if (r.path) |the_path| {
+        var person_id: []const u8 = "";
+
+        var it = std.mem.split(u8, the_path, "/pessoas/");
+        while (it.next()) |x| {
+            if (x.len <= 0) {
+                continue;
+            }
+
+            person_id = x;
+            std.debug.print("{s}\n", .{x});
+        }
+
+        if (person_id.len > 0) {
+            std.log.info("Person id = {s}", .{person_id});
+        } else {
+            std.log.info("Person id not found", .{});
+        }
+    }
+
+    not_found_response(r);
 }
 
 pub fn main() !void {
@@ -67,10 +126,11 @@ pub fn main() !void {
     try listener.listen();
 
     routes = std.StringHashMap(zap.SimpleHttpRequestFn).init(allocator);
-    try routes.put("/health-check", health_check);
-    try routes.put("/pessoas", people_routes);
+    try routes.put("GET /health-check", health_check);
+    try routes.put("GET /pessoas", load_people);
+    try routes.put("POST /pessoas", create_person);
 
-    std.debug.print("Listening on 0.0.0.0:9999\n", .{});
+    std.debug.print("\nListening on 0.0.0.0:9999\n", .{});
 
     // start worker threads
     zap.start(.{

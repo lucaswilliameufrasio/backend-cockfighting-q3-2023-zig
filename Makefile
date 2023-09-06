@@ -3,7 +3,7 @@ setup:
 PHONY: setup
 
 build-app:
-	$ zig build -Drelease-small
+	$ zig build
 PHONY: build-app
 
 run:
