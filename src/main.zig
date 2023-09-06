@@ -39,17 +39,21 @@ fn on_request(r: zap.SimpleRequest) void {
                         var getRoutesIterator = getRoutes.iterator();
                         var pathPartsIterator = std.mem.split(u8, the_path, "/");
                         var currentPathPart: []const u8 = "";
+                        var numberOfParts: usize = 0;
                         var thereAreMoreParts: bool = true;
                         var thereAreMoreRouteParts: bool = true;
 
-                        while (getRoutesIterator.next()) |route| {
+                        anotha_one: while (getRoutesIterator.next()) |route| {
                             var the_route = route.key_ptr.*;
-                            std.log.info("Route {s}", .{the_route});
+                            std.log.info("\n\nRoute {s}", .{the_route});
                             var routePathPartsIterator = std.mem.split(u8, the_route, "/");
+                            var numberOfRoutePathParts: usize = 0;
                             route_path_part_loop: while (routePathPartsIterator.next()) |route_path_part| {
                                 if (route_path_part.len == 0) {
                                     continue;
                                 }
+
+                                numberOfRoutePathParts = numberOfRoutePathParts + 1;
 
                                 var hasRouteParam = std.mem.startsWith(u8, route_path_part, ":");
                                 std.log.info("Route path part {s}", .{route_path_part});
@@ -68,6 +72,7 @@ fn on_request(r: zap.SimpleRequest) void {
                                     }
 
                                     currentPathPart = path_part;
+                                    numberOfParts = numberOfParts + 1;
 
                                     std.log.info("Path part peek {?s}", .{pathPartsIterator.peek()});
                                 }
@@ -79,24 +84,33 @@ fn on_request(r: zap.SimpleRequest) void {
                                 }
 
                                 std.log.info("There are more path part {any} {any}", .{ thereAreMoreParts, thereAreMoreRouteParts });
+                                std.log.info("Number of path parts {any} {any}", .{ numberOfParts, numberOfRoutePathParts });
 
-                                if (thereAreMoreRouteParts and std.mem.eql(u8, route_path_part, currentPathPart)) {
+                                if (thereAreMoreRouteParts and (hasRouteParam or std.mem.eql(u8, route_path_part, currentPathPart))) {
                                     continue :route_path_part_loop;
                                 }
 
-                                if (!thereAreMoreParts and !thereAreMoreRouteParts and !hasRouteParam and !std.mem.eql(u8, route_path_part, currentPathPart)) {
+                                if (!hasRouteParam and !std.mem.eql(u8, route_path_part, currentPathPart)) {
+                                    numberOfParts = 0;
                                     pathPartsIterator.reset();
                                     continue :route_path_part_loop;
                                 }
 
-                                if (!thereAreMoreRouteParts and hasRouteParam) {
-                                    std.log.info("Route used {s}", .{route.key_ptr.*});
+                                if (numberOfParts != numberOfRoutePathParts) {
+                                    numberOfParts = 0;
+                                    pathPartsIterator.reset();
+                                    continue :anotha_one;
+                                }
+
+                                if (!thereAreMoreParts and !thereAreMoreRouteParts and std.mem.eql(u8, route_path_part, currentPathPart)) {
+                                    std.log.info("Route used without param on last part {s}", .{route.key_ptr.*});
+                                    std.log.info("foi aqui? {s} {s}", .{ currentPathPart, route_path_part });
                                     route.value_ptr.*(r);
                                     return;
                                 }
 
-                                if (!thereAreMoreRouteParts and std.mem.eql(u8, route_path_part, currentPathPart)) {
-                                    std.log.info("foi aqui? {s} {s}", .{ currentPathPart, route_path_part });
+                                if (!thereAreMoreParts and !thereAreMoreRouteParts and hasRouteParam) {
+                                    std.log.info("Route used with param on last part {s}", .{route.key_ptr.*});
                                     route.value_ptr.*(r);
                                     return;
                                 }
@@ -112,12 +126,6 @@ fn on_request(r: zap.SimpleRequest) void {
                 },
                 else => not_found_response(r),
             }
-
-            // i need to implement a router to handle those cases...
-            // if (std.mem.startsWith(u8, the_path, "/pessoas/")) {
-            //     find_person(r);
-            //     return;
-            // }
         }
     }
 
@@ -222,6 +230,8 @@ pub fn main() !void {
     try getRoutes.put("/pessoas/:id", find_person);
     try getRoutes.put("/teste/:id", wrong_one);
     try getRoutes.put("/teste/:id/abc", correct_one);
+    try getRoutes.put("/teste/:id/abc/:denovo/efg/oia", correct_one);
+    try getRoutes.put("/teste/:id/abc/:denovo/efg", correct_one);
     try postRoutes.put("/pessoas", create_person);
 
     std.debug.print("\nListening on 0.0.0.0:9999\n", .{});
