@@ -2,7 +2,8 @@ const std = @import("std");
 const zap = @import("zap");
 const Connection = @import("pgz").Connection;
 
-var routes: std.StringHashMap(zap.SimpleHttpRequestFn) = undefined;
+var getRoutes: std.StringHashMap(zap.SimpleHttpRequestFn) = undefined;
+var postRoutes: std.StringHashMap(zap.SimpleHttpRequestFn) = undefined;
 
 fn not_found_response(r: zap.SimpleRequest) void {
     var json_to_send: []const u8 = "{\"message\":\"not found\"}";
@@ -18,6 +19,8 @@ fn internal_server_error_response(r: zap.SimpleRequest) void {
     r.sendBody(json_to_send) catch return;
 }
 
+const RequestMethodsAllowed = enum { GET, POST, PUT, DELETE, HEAD, OPTIONS };
+
 // dont look at it xd
 // all zap performance was drowned here
 fn on_request(r: zap.SimpleRequest) void {
@@ -25,20 +28,96 @@ fn on_request(r: zap.SimpleRequest) void {
         if (r.method) |the_method| {
             std.log.info("{?s} {s}", .{ the_method, the_path });
 
-            var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-            defer arena.deinit();
-            const route_path = std.fmt.allocPrint(arena.allocator(), "{s} {s}", .{ the_method, the_path }) catch return;
+            const method = std.meta.stringToEnum(RequestMethodsAllowed, the_method) orelse return;
 
-            if (routes.get(route_path)) |handler| {
-                handler(r);
-                return;
+            switch (method) {
+                .GET => {
+                    if (getRoutes.get(the_path)) |handler| {
+                        handler(r);
+                        return;
+                    } else {
+                        var getRoutesIterator = getRoutes.iterator();
+                        var pathPartsIterator = std.mem.split(u8, the_path, "/");
+
+                        while (getRoutesIterator.next()) |route| {
+                            var the_route = route.key_ptr.*;
+                            std.log.info("Route {s}", .{the_route});
+                            var routePathPartsIterator = std.mem.split(u8, the_route, "/");
+                            route_path_part_loop: while (routePathPartsIterator.next()) |route_path_part| {
+                                if (route_path_part.len == 0) {
+                                    continue;
+                                }
+
+                                var currentPathPart: []const u8 = "";
+                                var thereAreMoreParts: bool = true;
+
+                                var hasRouteParam = std.mem.startsWith(u8, route_path_part, ":");
+                                std.log.info("Route path part {s}", .{route_path_part});
+                                std.log.info("has route param {any}", .{hasRouteParam});
+
+                                path_part_loop: while (pathPartsIterator.next()) |path_part| {
+                                    if (pathPartsIterator.peek() == null) {
+                                        thereAreMoreParts = false;
+                                    }
+
+                                    if (pathPartsIterator.peek() != null and pathPartsIterator.peek().?.len == 0) {
+                                        thereAreMoreParts = false;
+                                    }
+
+                                    if (path_part.len == 0) {
+                                        std.log.info("oxi {s}", .{path_part});
+
+                                        continue :path_part_loop;
+                                    }
+
+                                    std.log.info("Route path part inside path iterator {s}", .{route_path_part});
+                                    std.log.info("Path part {s}", .{path_part});
+                                    std.log.info("Path part peek {any}", .{pathPartsIterator.peek()});
+                                    currentPathPart = path_part;
+                                }
+
+                                if (!hasRouteParam and !std.mem.eql(u8, route_path_part, currentPathPart)) {
+                                    continue :route_path_part_loop;
+                                }
+
+                                if (std.mem.eql(u8, route_path_part, currentPathPart)) {
+                                    route.value_ptr.*(r);
+                                    return;
+                                }
+
+                                if (currentPathPart.len > 0) {
+                                    std.log.info("Current path part {any}", .{currentPathPart});
+                                } else {
+                                    std.log.info("There is the b.o on current path part", .{});
+                                }
+                                std.log.info("There are more path part {any}", .{thereAreMoreParts});
+                                // if (hasRouteParam and thereAreMoreParts) {
+                                //     continue :route_path_part_loop;
+                                // }
+
+                                if (hasRouteParam) {
+                                    std.log.info("Route used {s}", .{route.key_ptr.*});
+                                    route.value_ptr.*(r);
+                                    return;
+                                }
+                            }
+                        }
+                    }
+                },
+                .POST => {
+                    if (postRoutes.get(the_path)) |handler| {
+                        handler(r);
+                        return;
+                    }
+                },
+                else => not_found_response(r),
             }
 
             // i need to implement a router to handle those cases...
-            if (std.mem.startsWith(u8, the_path, "/pessoas/")) {
-                find_person(r);
-                return;
-            }
+            // if (std.mem.startsWith(u8, the_path, "/pessoas/")) {
+            //     find_person(r);
+            //     return;
+            // }
         }
     }
 
@@ -75,13 +154,20 @@ fn load_people(r: zap.SimpleRequest) void {
     r.sendJson("{\"message\":\"ok\"}") catch return;
 }
 
+fn wrong_one(r: zap.SimpleRequest) void {
+    r.setContentType(.JSON) catch return;
+    r.setStatus(zap.StatusCode.bad_request);
+    r.sendJson("{\"message\":\"wrong\"}") catch return;
+}
+
+fn correct_one(r: zap.SimpleRequest) void {
+    r.setContentType(.JSON) catch return;
+    r.setStatus(zap.StatusCode.ok);
+    r.sendJson("{\"message\":\"got it\"}") catch return;
+}
+
 // I need a router, for sure
 fn find_person(r: zap.SimpleRequest) void {
-    if (!std.mem.eql(u8, r.method.?, "GET")) {
-        not_found_response(r);
-        return;
-    }
-
     // It should be handle on 'on_request' method, i know...
     // it is just a non ortodoxy solution :)
     if (r.path) |the_path| {
@@ -99,9 +185,13 @@ fn find_person(r: zap.SimpleRequest) void {
 
         if (person_id.len > 0) {
             std.log.info("Person id = {s}", .{person_id});
-        } else {
-            std.log.info("Person id not found", .{});
+            r.setContentType(.JSON) catch return;
+            r.setStatus(zap.StatusCode.ok);
+            r.sendJson("{\"message\":\"ok\"}") catch return;
+            return;
         }
+
+        std.log.info("Person id not found", .{});
     }
 
     not_found_response(r);
@@ -125,10 +215,14 @@ pub fn main() !void {
 
     try listener.listen();
 
-    routes = std.StringHashMap(zap.SimpleHttpRequestFn).init(allocator);
-    try routes.put("GET /health-check", health_check);
-    try routes.put("GET /pessoas", load_people);
-    try routes.put("POST /pessoas", create_person);
+    getRoutes = std.StringHashMap(zap.SimpleHttpRequestFn).init(allocator);
+    postRoutes = std.StringHashMap(zap.SimpleHttpRequestFn).init(allocator);
+    try getRoutes.put("/health-check", health_check);
+    try getRoutes.put("/pessoas", load_people);
+    try getRoutes.put("/pessoas/:id", find_person);
+    try getRoutes.put("/teste/:id", wrong_one);
+    try getRoutes.put("/teste/:id/abc", correct_one);
+    try postRoutes.put("/pessoas", create_person);
 
     std.debug.print("\nListening on 0.0.0.0:9999\n", .{});
 
