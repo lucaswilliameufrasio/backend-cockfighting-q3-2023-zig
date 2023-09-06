@@ -38,6 +38,9 @@ fn on_request(r: zap.SimpleRequest) void {
                     } else {
                         var getRoutesIterator = getRoutes.iterator();
                         var pathPartsIterator = std.mem.split(u8, the_path, "/");
+                        var currentPathPart: []const u8 = "";
+                        var thereAreMoreParts: bool = true;
+                        var thereAreMoreRouteParts: bool = true;
 
                         while (getRoutesIterator.next()) |route| {
                             var the_route = route.key_ptr.*;
@@ -48,21 +51,15 @@ fn on_request(r: zap.SimpleRequest) void {
                                     continue;
                                 }
 
-                                var currentPathPart: []const u8 = "";
-                                var thereAreMoreParts: bool = true;
-
                                 var hasRouteParam = std.mem.startsWith(u8, route_path_part, ":");
                                 std.log.info("Route path part {s}", .{route_path_part});
                                 std.log.info("has route param {any}", .{hasRouteParam});
 
+                                thereAreMoreRouteParts = routePathPartsIterator.peek() != null and routePathPartsIterator.peek().?.len > 0;
+                                std.log.info("uai {}", .{thereAreMoreRouteParts});
+                                std.log.info("Route Path part peek {?s}", .{routePathPartsIterator.peek()});
                                 path_part_loop: while (pathPartsIterator.next()) |path_part| {
-                                    if (pathPartsIterator.peek() == null) {
-                                        thereAreMoreParts = false;
-                                    }
-
-                                    if (pathPartsIterator.peek() != null and pathPartsIterator.peek().?.len == 0) {
-                                        thereAreMoreParts = false;
-                                    }
+                                    thereAreMoreParts = pathPartsIterator.peek() != null and pathPartsIterator.peek().?.len > 0;
 
                                     if (path_part.len == 0) {
                                         std.log.info("oxi {s}", .{path_part});
@@ -70,33 +67,36 @@ fn on_request(r: zap.SimpleRequest) void {
                                         continue :path_part_loop;
                                     }
 
-                                    std.log.info("Route path part inside path iterator {s}", .{route_path_part});
-                                    std.log.info("Path part {s}", .{path_part});
-                                    std.log.info("Path part peek {any}", .{pathPartsIterator.peek()});
                                     currentPathPart = path_part;
+
+                                    std.log.info("Path part peek {?s}", .{pathPartsIterator.peek()});
                                 }
 
-                                if (!hasRouteParam and !std.mem.eql(u8, route_path_part, currentPathPart)) {
+                                if (currentPathPart.len > 0) {
+                                    std.log.info("Current path part {s}", .{currentPathPart});
+                                } else {
+                                    std.log.info("There is the b.o on current path part", .{});
+                                }
+
+                                std.log.info("There are more path part {any} {any}", .{ thereAreMoreParts, thereAreMoreRouteParts });
+
+                                if (thereAreMoreRouteParts and std.mem.eql(u8, route_path_part, currentPathPart)) {
                                     continue :route_path_part_loop;
                                 }
 
-                                if (std.mem.eql(u8, route_path_part, currentPathPart)) {
+                                if (!thereAreMoreParts and !thereAreMoreRouteParts and !hasRouteParam and !std.mem.eql(u8, route_path_part, currentPathPart)) {
+                                    pathPartsIterator.reset();
+                                    continue :route_path_part_loop;
+                                }
+
+                                if (!thereAreMoreRouteParts and hasRouteParam) {
+                                    std.log.info("Route used {s}", .{route.key_ptr.*});
                                     route.value_ptr.*(r);
                                     return;
                                 }
 
-                                if (currentPathPart.len > 0) {
-                                    std.log.info("Current path part {any}", .{currentPathPart});
-                                } else {
-                                    std.log.info("There is the b.o on current path part", .{});
-                                }
-                                std.log.info("There are more path part {any}", .{thereAreMoreParts});
-                                // if (hasRouteParam and thereAreMoreParts) {
-                                //     continue :route_path_part_loop;
-                                // }
-
-                                if (hasRouteParam) {
-                                    std.log.info("Route used {s}", .{route.key_ptr.*});
+                                if (!thereAreMoreRouteParts and std.mem.eql(u8, route_path_part, currentPathPart)) {
+                                    std.log.info("foi aqui? {s} {s}", .{ currentPathPart, route_path_part });
                                     route.value_ptr.*(r);
                                     return;
                                 }
