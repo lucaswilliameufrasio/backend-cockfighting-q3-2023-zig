@@ -1,11 +1,19 @@
 const std = @import("std");
 const zap = @import("zap");
 const Connection = @import("pgz").Connection;
+const UUID = @import("uuid").UUID;
 
 const SimpleHttpRequestFnWithRouteParams = *const fn (zap.SimpleRequest, ?std.StringHashMap([]const u8)) void;
 
 var getRoutes: std.StringHashMap(SimpleHttpRequestFnWithRouteParams) = undefined;
 var postRoutes: std.StringHashMap(SimpleHttpRequestFnWithRouteParams) = undefined;
+
+fn unprocessable_content_response(r: zap.SimpleRequest) void {
+    var json_to_send: []const u8 = "{\"message\":\"invalid content\"}";
+    r.setStatusNumeric(422);
+    r.setContentType(.JSON) catch return;
+    r.sendBody(json_to_send) catch return;
+}
 
 fn not_found_response(r: zap.SimpleRequest) void {
     var json_to_send: []const u8 = "{\"message\":\"not found\"}";
@@ -22,6 +30,13 @@ fn internal_server_error_response(r: zap.SimpleRequest) void {
 }
 
 const RequestMethodsAllowed = enum { GET, POST, PUT, DELETE, HEAD, OPTIONS };
+
+pub const CreatePersonRequestBody = struct {
+    apelido: []const u8,
+    nome: []const u8,
+    nascimento: []const u8,
+    stack: ?[][]const u8,
+};
 
 // dont look at it xd
 // all zap performance was drowned here
@@ -117,19 +132,90 @@ fn health_check(r: zap.SimpleRequest, params: ?std.StringHashMap([]const u8)) vo
 
 fn create_person(r: zap.SimpleRequest, params: ?std.StringHashMap([]const u8)) void {
     _ = params;
-    var result = connection.query("SELECT 1 as number;", struct { number: ?[]const u8 }) catch {
+
+    r.parseBody() catch {
         internal_server_error_response(r);
         return;
     };
-    defer result.deinit();
-    std.io.getStdOut().writer().print("number = {s}\n", .{result.data[0].number.?}) catch {
+
+    if (r.body == null) {
+        unprocessable_content_response(r);
+        return;
+    }
+
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena.deinit();
+    var arenaAllocator = arena.allocator();
+    var maybe_person: std.json.Parsed(CreatePersonRequestBody) = std.json.parseFromSlice(CreatePersonRequestBody, arenaAllocator, r.body.?, .{}) catch |err| {
+        std.debug.print("Failed to parse body {any}", .{err});
+        unprocessable_content_response(r);
+        return;
+    };
+    defer maybe_person.deinit();
+
+    var findPersonStatement = connection.prepare("SELECT people.id AS id FROM people WHERE people.nickname = $1;") catch |err| {
+        std.debug.print("\nFailed to prepare statement for finding person {any}\n", .{err});
+        internal_server_error_response(r);
+        return;
+    };
+
+    var personFound = findPersonStatement.query(struct { id: ?[]const u8 }, .{maybe_person.value.apelido}) catch |err| {
+        std.debug.print("\nFailed to execute statement for finding person {any}\n", .{err});
+        internal_server_error_response(r);
+        return;
+    };
+
+    if (personFound.data.len > 0) {
+        unprocessable_content_response(r);
+        return;
+    }
+
+    var stacks: []const u8 = "";
+
+    if (maybe_person.value.stack) |stacks_from_body| {
+        for (stacks_from_body) |stack_from_body| {
+            if (stacks.len == 0) {
+                stacks = stack_from_body;
+                continue;
+            }
+
+            stacks = std.fmt.allocPrint(arenaAllocator, "{s},{s}", .{ stacks, stack_from_body }) catch {
+                internal_server_error_response(r);
+                return;
+            };
+        }
+    }
+
+    var statement = connection.prepare(
+        \\ INSERT INTO people (id, nickname, name, birth_date, stack) 
+        \\ VALUES ($1, $2, $3, $4, $5)
+        \\ ON CONFLICT DO NOTHING;
+        ,
+    ) catch |err| {
+        std.debug.print("\noxi {any}\n", .{err});
+        internal_server_error_response(r);
+        return;
+    };
+
+    const uuid = std.fmt.allocPrint(arenaAllocator, "{s}", .{UUID.init()}) catch {
+        internal_server_error_response(r);
+        return;
+    };
+
+    statement.exec(.{ uuid, maybe_person.value.apelido, maybe_person.value.nome, maybe_person.value.nascimento, stacks }) catch |err| {
+        std.debug.print("Failed to execute query to insert a new person {any}", .{err});
+        internal_server_error_response(r);
+        return;
+    };
+
+    var location = std.fmt.allocPrint(arenaAllocator, "/pessoas/{s}", .{uuid}) catch {
         internal_server_error_response(r);
         return;
     };
 
     r.setContentType(.JSON) catch return;
     r.setStatus(zap.StatusCode.created);
-    r.setHeader("Location", "/pessoas/1") catch return;
+    r.setHeader("Location", location) catch return;
     r.sendJson("{\"message\":\"ok\"}") catch return;
 }
 
@@ -141,19 +227,15 @@ fn load_people(r: zap.SimpleRequest, params: ?std.StringHashMap([]const u8)) voi
 }
 
 fn find_person(r: zap.SimpleRequest, params: ?std.StringHashMap([]const u8)) void {
-    if (params == null) {
+    if (params == null or params.?.get(":id") == null) {
         not_found_response(r);
         return;
     }
 
-    if (params.?.get(":id") != null) {
-        r.setContentType(.JSON) catch return;
-        r.setStatus(zap.StatusCode.ok);
-        r.sendJson("{\"message\":\"ok\"}") catch return;
-        return;
-    }
-
-    not_found_response(r);
+    r.setContentType(.JSON) catch return;
+    r.setStatus(zap.StatusCode.ok);
+    r.sendJson("{\"message\":\"ok\"}") catch return;
+    return;
 }
 
 pub fn main() !void {
@@ -170,6 +252,7 @@ pub fn main() !void {
         .port = 9999,
         .on_request = on_request,
         .log = false,
+        .max_body_size = 1 * 1024,
     });
 
     try listener.listen();

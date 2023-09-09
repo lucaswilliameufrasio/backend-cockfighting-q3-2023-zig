@@ -55,6 +55,13 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
     exe.addModule("pgz", pgz.module("pgz"));
+
+    const uuid = b.dependency("uuid", .{
+        .target = target,
+        .optimize = optimize,
+    });
+    exe.addModule("uuid", uuid.module("uuid"));
+
     // exe.linkLibrary(pgz.artifact());
 
     // This declares intent for the executable to be installed into the

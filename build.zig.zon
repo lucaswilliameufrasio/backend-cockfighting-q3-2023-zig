@@ -9,8 +9,12 @@
             .hash = "1220a645e8ae84064f3342609f65d1c97e23c292616f5d1040cdf314ca52d7643f8a",
         },
         .pgz = .{
-            .url = "https://github.com/star-tek-mb/pgz/archive/2816338a92d91f89f63bdcddd23bb3e34a11275f.tar.gz",
-            .hash = "12201d7ceacce0c1b734a6f3feded12050a61f5ab93ed2666fac84b96e2a306d2a2f",
+            .url = "https://github.com/lucaswilliameufrasio/pgz/archive/d8331dbdb1635a7292dcd68a4a0a4b97789b617c.tar.gz",
+            .hash = "122062bb84a6ca38b5f07a40ec9daa43c990b0b1f317800aa0d1c3d1a6822107a3ed",
+        },
+        .uuid = .{
+            .url = "https://github.com/dmgk/zig-uuid/archive/e20228ec21f3f612f5c8bde322ce4a5014b0b829.tar.gz",
+            .hash = "1220964ebbbcf57f19a2b344f1d778d76429e39f42b8054e84fadcbf8d0c71728c93",
         },
     },
 }
