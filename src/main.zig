@@ -226,15 +226,77 @@ fn load_people(r: zap.SimpleRequest, params: ?std.StringHashMap([]const u8)) voi
     r.sendJson("{\"message\":\"ok\"}") catch return;
 }
 
+pub const FindPersonResponseBody = struct {
+    id: []const u8,
+    apelido: []const u8,
+    nome: []const u8,
+    nascimento: []const u8,
+    stack: ?[][]const u8,
+};
+
 fn find_person(r: zap.SimpleRequest, params: ?std.StringHashMap([]const u8)) void {
-    if (params == null or params.?.get(":id") == null) {
+    if (params == null) {
         not_found_response(r);
+        return;
+    }
+
+    var id = params.?.get(":id");
+
+    if (id == null or id.?.len != 36) {
+        not_found_response(r);
+        return;
+    }
+
+    var findPersonStatement = connection.prepare("SELECT people.id, people.nickname, people.name, people.birth_date, people.stack FROM people WHERE people.id = $1;") catch |err| {
+        std.debug.print("\nFailed to prepare statement for finding person {any}\n", .{err});
+        internal_server_error_response(r);
+        return;
+    };
+
+    var personFound = findPersonStatement.query(struct { id: []const u8, nickname: []const u8, name: []const u8, birth_date: []const u8, stack: []const u8 }, .{id}) catch |err| {
+        std.debug.print("\nFailed to execute statement for finding person {any}\n", .{err});
+        internal_server_error_response(r);
+        return;
+    };
+
+    if (personFound.data.len == 0) {
+        not_found_response(r);
+        return;
+    }
+
+    var buffer: [2000]u8 = undefined;
+    var json_to_send: []const u8 = undefined;
+
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena.deinit();
+    var arenaAllocator = arena.allocator();
+
+    var stacksList = std.ArrayList([]const u8).init(arenaAllocator);
+    defer stacksList.deinit();
+    var stacksIterator = std.mem.split(u8, personFound.data[0].stack, ",");
+
+    while (stacksIterator.next()) |stack| {
+        stacksList.append(stack) catch continue;
+    }
+
+    var person = FindPersonResponseBody{
+        .id = personFound.data[0].id,
+        .apelido = personFound.data[0].nickname,
+        .nome = personFound.data[0].name,
+        .nascimento = personFound.data[0].birth_date,
+        .stack = stacksList.items,
+    };
+
+    if (zap.stringifyBuf(&buffer, person, .{})) |json| {
+        json_to_send = json;
+    } else {
+        internal_server_error_response(r);
         return;
     }
 
     r.setContentType(.JSON) catch return;
     r.setStatus(zap.StatusCode.ok);
-    r.sendJson("{\"message\":\"ok\"}") catch return;
+    r.sendJson(json_to_send) catch return;
     return;
 }
 
